@@ -15,6 +15,11 @@ fourcc = cv2.VideoWriter.fourcc(*"mp4v")
 fps = 60
 w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+slice_w_offset = 910  # 宽-切片位置
+if slice_w_offset > 0:
+    w = w - slice_w_offset
+    prev = prev[:, slice_w_offset:]
+    prev_gray = prev_gray[:, slice_w_offset:]
 out = cv2.VideoWriter("out.mp4", fourcc, fps, (w * 2, h))
 
 a, x, y = 0.0, 0.0, 0.0
@@ -25,6 +30,7 @@ while True:
         ret, curr = cap.read()
         if not ret:
             break
+        curr = curr[:, slice_w_offset:]
         curr_gray = cv2.cvtColor(curr, cv2.COLOR_BGR2GRAY)
         feature_params = dict(maxCorners=100, qualityLevel=0.3, minDistance=7, blockSize=7)
         lk_params = dict(winSize=(15, 15), maxLevel=2,
