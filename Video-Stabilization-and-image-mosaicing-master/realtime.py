@@ -4,6 +4,7 @@ import math
 
 SMOOTHING_RADIUS = 30
 HORIZONTAL_BORDER_CROP = 20
+DISPLAY_CORNERS = False
 
 video_file = "chen1.mp4"
 cap = cv2.VideoCapture(video_file)
@@ -24,6 +25,10 @@ out = cv2.VideoWriter("out.mp4", fourcc, fps, (w * 2, h))
 
 a, x, y = 0.0, 0.0, 0.0
 trajectory = []
+
+#def kalman():
+#    from cv2 import KalmanFilter
+
 
 while True:
     try:
@@ -75,13 +80,19 @@ while True:
         T = np.matrix([[math.cos(ta), -math.sin(ta), tx], [math.sin(ta), math.cos(ta), ty]])
         curr2 = cv2.warpAffine(curr, T, (len(curr[0]), len(curr)))
 
-        # 拼接图像，输出到视频文件
-        image = np.concatenate((curr, curr2), axis=1)
-        out.write(image)
-
         # 当前帧切换成过去帧。便于下一步计算新的拐点及其移动。
         prev = curr.copy()
         prev_gray = curr_gray.copy()
+
+        # curr叠加corners展示
+        curro = curr.copy()
+        if DISPLAY_CORNERS:  # 显示了之后，右边的图有较大偏移，尚未知原因
+            for x, y in current_corner2:
+                cv2.circle(curro, (int(x), int(y)), 5, (0, 0, 255), -1)
+
+        # 拼接图像，输出到视频文件
+        image = np.concatenate((curro, curr2), axis=1)
+        out.write(image)
     except Exception as e:
         break
 
