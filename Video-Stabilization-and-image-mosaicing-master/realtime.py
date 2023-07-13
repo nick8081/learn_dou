@@ -10,12 +10,23 @@ cap = cv2.VideoCapture(video_file)
 
 ret, prev = cap.read()
 prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
-
 previous_to_current_transform = []
 
-k = 1
+fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+fps = 60
+w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+out = cv2.VideoWriter("out.mp4", fourcc, fps, (w * 2, h))
 
-while (True):
+a, x, y = 0.0, 0.0, 0.0
+trajectory = []
+
+smoothed_trajectory = []
+
+new_previous_to_current_transform = []
+
+
+while True:
     try:
         ret, curr = cap.read()
         if not ret:
@@ -36,79 +47,38 @@ while (True):
         da = math.atan2(T[0][1, 0], T[0][0, 0])
 
         previous_to_current_transform.append((dx, dy, da))
-        prev = curr.copy()
-        prev_gray = curr_gray.copy()
-        k += 1
-    except Exception as e:
-        break
 
-max_frames = k
-a, x, y = 0.0, 0.0, 0.0
-trajectory = []
+        x += dx
+        y += dy
+        a += da
+        trajectory.append((x, y, a))
 
-for i in range(len(previous_to_current_transform)):
-    tx, ty, ta = previous_to_current_transform[i]
-    x += tx
-    y += ty
-    a += ta
-    trajectory.append((x, y, a))
-
-smoothed_trajectory = []
-
-for i in range(len(trajectory)):
-    sx, sy, sa, ctr = 0.0, 0.0, 0.0, 0
-    for j in range(-SMOOTHING_RADIUS, SMOOTHING_RADIUS + 1):
-        if 0 <= i + j < len(trajectory):
-            tx, ty, ta = trajectory[i + j]
+        # 平移平均滤波
+        sx, sy, sa, ctr = 0.0, 0.0, 0.0, 0
+        for i, value in enumerate(reversed(trajectory)):
+            if i >= SMOOTHING_RADIUS:
+                break
+            tx, ty, ta = trajectory[i]
             sx += tx
             sy += ty
             sa += ta
             ctr += 1
-    smoothed_trajectory.append((sx / ctr, sy / ctr, sa / ctr))
+        smoothed_trajectory.append((sx / ctr, sy / ctr, sa / ctr))
+        sx, sy, sa = smoothed_trajectory[-1]
 
-new_previous_to_current_transform = []
-a, x, y = 0.0, 0.0, 0.0
+        nx, ny, na = trajectory[-1]
+        new_previous_to_current_transform.append((dx + sx - nx, dy + sy - ny, da + sa - na))
 
-for i in range(len(previous_to_current_transform)):
-    tx, ty, ta = previous_to_current_transform[i]
-    sx, sy, sa = smoothed_trajectory[i]
-    x += tx
-    y += ty
-    a += ta
-    new_previous_to_current_transform.append((tx + sx - x, ty + sy - y, ta + sa - a))
+        tx, ty, ta = new_previous_to_current_transform[-1]
+        T = np.matrix([[math.cos(ta), -math.sin(ta), tx], [math.sin(ta), math.cos(ta), ty]])
+        curr2 = cv2.warpAffine(curr, T, (len(curr[0]), len(curr)))
+        image = np.concatenate((curr, curr2), axis=1)
+        out.write(image)
 
-vert_border = HORIZONTAL_BORDER_CROP * len(prev) / len(prev[0])
-
-cap = cv2.VideoCapture(video_file)
-
-k = 0
-
-fourcc = cv2.VideoWriter.fourcc(*"mp4v")
-fps = 60
-w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-out = cv2.VideoWriter("out.mp4", fourcc, fps, (w * 2, h))
-
-while (k < max_frames - 1):
-    ret, curr = cap.read()
-    if not ret:
+        prev = curr.copy()
+        prev_gray = curr_gray.copy()
+    except Exception as e:
         break
-    tx, ty, ta = new_previous_to_current_transform[k]
-    T = np.matrix([[math.cos(ta), -math.sin(ta), tx], [math.sin(ta), math.cos(ta), ty]])
-    curr2 = cv2.warpAffine(curr, T, (len(curr[0]), len(curr)))
-    # curr2 = curr2[HORIZONTAL_BORDER_CROP:len(curr2[0] - HORIZONTAL_BORDER_CROP),
-    #         int(vert_border):len(curr2) - int(vert_border)]
-    # curr2 = cv2.resize(curr2, (len(curr[0]), len(curr)))
-    #        cv2.imshow("after", curr2)
-
-    image = np.concatenate((curr, curr2), axis=1)
-    out.write(image)
-#        cv2.imshow("before and after", image)
-
-# key = cv2.waitKey(30) & 0xff
-# if key == 27:
-#     break
-# k += 1
 
 cap.release()
 out.release()
