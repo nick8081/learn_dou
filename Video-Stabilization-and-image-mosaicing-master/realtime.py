@@ -23,11 +23,41 @@ if slice_w_offset > 0:
     prev_gray = prev_gray[:, slice_w_offset:]
 out = cv2.VideoWriter("out.mp4", fourcc, fps, (w * 2, h))
 
+def kalman_filter(dx, dy, da):
+    kalman = cv2.KalmanFilter(2, 1, 0)
+    kalman.transitionMatrix = np.array([[0.],[]])
+
+
 a, x, y = 0.0, 0.0, 0.0
 trajectory = []
+def avg_move_filter(dx, dy, da):
+    """移动平均滤波
+    """
+    global a, x, y, trajectory
+    # 计算移动窗口内的轨迹。后续计算滤波时要用。
+    x += dx
+    y += dy
+    a += da
+    trajectory.append((x, y, a))
+    if len(trajectory) >= SMOOTHING_RADIUS:
+        trajectory = trajectory[:SMOOTHING_RADIUS]
 
-#def kalman():
-#    from cv2 import KalmanFilter
+    # 平移平均滤波，得到滤波系数。
+    sx, sy, sa, ctr = 0.0, 0.0, 0.0, 0
+    for i, value in enumerate(reversed(trajectory)):
+        if i >= SMOOTHING_RADIUS:
+            break
+        tx, ty, ta = value
+        sx += tx
+        sy += ty
+        sa += ta
+        ctr += 1
+    sx, sy, sa = sx / ctr, sy / ctr, sa / ctr
+
+    # 之前得到的拐点仿射变换值，这里经过滤波处理，得到平滑值
+    nx, ny, na = trajectory[-1]
+    tx, ty, ta = dx + sx - nx, dy + sy - ny, da + sa - na
+    return tx, ty, ta
 
 
 while True:
@@ -52,29 +82,7 @@ while True:
         dy = T[0][1, 2]
         da = math.atan2(T[0][1, 0], T[0][0, 0])
 
-        # 计算移动窗口内的轨迹。后续计算滤波时要用。
-        x += dx
-        y += dy
-        a += da
-        trajectory.append((x, y, a))
-        if len(trajectory) >= SMOOTHING_RADIUS:
-            trajectory = trajectory[:SMOOTHING_RADIUS]
-
-        # 平移平均滤波，得到滤波系数。
-        sx, sy, sa, ctr = 0.0, 0.0, 0.0, 0
-        for i, value in enumerate(reversed(trajectory)):
-            if i >= SMOOTHING_RADIUS:
-                break
-            tx, ty, ta = value
-            sx += tx
-            sy += ty
-            sa += ta
-            ctr += 1
-        sx, sy, sa = sx / ctr, sy / ctr, sa / ctr
-
-        # 之前得到的拐点仿射变换值，这里经过滤波处理，得到平滑值
-        nx, ny, na = trajectory[-1]
-        tx, ty, ta = dx + sx - nx, dy + sy - ny, da + sa - na
+        tx, ty, ta = avg_move_filter(dx, dy, da)
 
         # 通过拐点放射变换值，计算得到warp系数，执行warp
         T = np.matrix([[math.cos(ta), -math.sin(ta), tx], [math.sin(ta), math.cos(ta), ty]])
@@ -86,7 +94,7 @@ while True:
 
         # curr叠加corners展示
         curro = curr.copy()
-        if DISPLAY_CORNERS:  # 显示了之后，右边的图有较大偏移，尚未知原因
+        if DISPLAY_CORNERS:  # 叠加显示了之后，右边的图有较大偏移，尚未知原因
             for x, y in current_corner2:
                 cv2.circle(curro, (int(x), int(y)), 5, (0, 0, 255), -1)
 
