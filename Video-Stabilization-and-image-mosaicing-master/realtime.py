@@ -1,10 +1,18 @@
 import numpy as np
 import cv2
 import math
+from enum import Enum
+
+
+class ModeFilter(Enum):
+    AveMove = 1
+    Kalman = 2
+
 
 SMOOTHING_RADIUS = 30
 HORIZONTAL_BORDER_CROP = 20
 DISPLAY_CORNERS = False
+MODE_FILTER = ModeFilter.Kalman
 
 video_file = "chen1.mp4"
 cap = cv2.VideoCapture(video_file)
@@ -23,13 +31,37 @@ if slice_w_offset > 0:
     prev_gray = prev_gray[:, slice_w_offset:]
 out = cv2.VideoWriter("out.mp4", fourcc, fps, (w * 2, h))
 
-def kalman_filter(dx, dy, da):
-    kalman = cv2.KalmanFilter(2, 1, 0)
-    kalman.transitionMatrix = np.array([[0.],[]])
+
+def kalman_filter_init():
+    kalman = cv2.KalmanFilter(3, 3, 0)  # state 3个，measurement 3个
+    kalman.transitionMatrix = 1.0 * np.eye(3, 3)    # F. input
+    kalman.measurementMatrix = 1.0 * np.eye(3, 3)   # 1.0 * np.eye(1, 3)   # H. input
+    kalman.processNoiseCov = 1e-5 * np.eye(3, 3)    # Q. input
+    kalman.measurementNoiseCov = 1e-1 * np.ones((1, 1))  # R. input
+    kalman.errorCovPost = 1.0 * np.eye(3, 3)             # P._K|K KF state var
+    kalman.statePost = 0.1 * np.random.randn(3, 1)       # X^_K|K KF state var
+    return kalman
+
+
+def kalman_filter(kalman: cv2.KalmanFilter, dx, dy, da):
+    # 预测，updates statePre, statePost, errorCovPre, errorCovPost
+    kalman.predict()
+
+    kalman.correct(da * np.zeros((1,1)))
+
+    # 根据实测值，修正statePost, errorCovPost
+    # measurement = 1.0 * np.zeros((3, 1))
+    # measurement[0][0] = dx
+    # measurement[1][0] = dy
+    # measurement[2][0] = da
+    # kalman.correct(measurement)
+    return kalman.statePost[0][0], kalman.statePost[1][0], kalman.statePost[2][0]
 
 
 a, x, y = 0.0, 0.0, 0.0
 trajectory = []
+
+
 def avg_move_filter(dx, dy, da):
     """移动平均滤波
     """
@@ -60,6 +92,7 @@ def avg_move_filter(dx, dy, da):
     return tx, ty, ta
 
 
+kalman = kalman_filter_init()
 while True:
     try:
         ret, curr = cap.read()
@@ -82,7 +115,10 @@ while True:
         dy = T[0][1, 2]
         da = math.atan2(T[0][1, 0], T[0][0, 0])
 
-        tx, ty, ta = avg_move_filter(dx, dy, da)
+        if MODE_FILTER == ModeFilter.Kalman:
+            tx, ty, ta = kalman_filter(kalman, dx, dy, da)
+        else:
+            tx, ty, ta = avg_move_filter(dx, dy, da)
 
         # 通过拐点放射变换值，计算得到warp系数，执行warp
         T = np.matrix([[math.cos(ta), -math.sin(ta), tx], [math.sin(ta), math.cos(ta), ty]])
@@ -102,6 +138,7 @@ while True:
         image = np.concatenate((curro, curr2), axis=1)
         out.write(image)
     except Exception as e:
+        print(e)
         break
 
 cap.release()
