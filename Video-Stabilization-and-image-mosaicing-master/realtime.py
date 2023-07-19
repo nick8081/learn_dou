@@ -7,12 +7,12 @@ from enum import Enum
 class ModeFilter(Enum):
     AveMove = 1
     Kalman = 2
+    Both = 3   # avemove, kalman都各自做一遍，最后将图像都拼接起来，便于比较不同滤波器下的效果
 
 
 SMOOTHING_RADIUS = 10  # 30
-HORIZONTAL_BORDER_CROP = 20
-DISPLAY_CORNERS = False
-MODE_FILTER = ModeFilter.Kalman
+HORIZONTAL_BORDER_CROP = 20  # 水平方向，两侧要裁掉的边缘像素数量
+MODE_FILTER = ModeFilter.Both
 
 video_file = "chen1.mp4"
 cap = cv2.VideoCapture(video_file)
@@ -25,12 +25,12 @@ h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 out_file = "out.mp4"
 fourcc = cv2.VideoWriter.fourcc(*"mp4v")
 fps = 60
-slice_w_offset = int(w / 3)  # 910  # 宽-切片位置
+slice_w_offset = int(w / 3)  # 裁剪出 右边2/3 的图像
 if slice_w_offset > 0:
     w = w - slice_w_offset
     prev = prev[:, slice_w_offset:]
     prev_gray = prev_gray[:, slice_w_offset:]
-out = cv2.VideoWriter(out_file, fourcc, fps, (w * 2, h))
+out = cv2.VideoWriter(out_file, fourcc, fps, (w * (2 if MODE_FILTER != ModeFilter.Both else 3), h))
 
 
 def kalman_filter_init():
@@ -47,7 +47,7 @@ def kalman_filter_init():
     ])
     kalman.measurementMatrix = 1.0 * np.eye(measure_num, state_num)   # 1.0 * np.eye(1, 3)   # H. input
     kalman.processNoiseCov = 1e-5 * np.eye(state_num, state_num)    # Q. input
-    kalman.measurementNoiseCov = 1e-1 * np.ones((measure_num, measure_num))  # R. input
+    kalman.measurementNoiseCov = 1. * np.ones((measure_num, measure_num))  # R. input
     kalman.errorCovPost = 1.0 * np.eye(state_num, state_num)             # P._K|K KF state var
     kalman.statePost = 0.1 * np.random.randn(state_num, 1)               # X^_K|K KF state var
     return kalman
@@ -96,6 +96,22 @@ def avg_move_filter(dx, dy, da):
     return tx, ty, ta
 
 
+def border_crop(image):
+    """裁剪掉边缘部分
+    """
+    vert_border = int(HORIZONTAL_BORDER_CROP * h / w)
+    image1 = image[HORIZONTAL_BORDER_CROP:w - HORIZONTAL_BORDER_CROP, vert_border:h - vert_border]
+    image2 = cv2.resize(image1, (w, h))
+    return image2
+
+def warp_image(image, tx, ty, ta):
+    # 通过拐点放射变换值，计算得到warp系数，执行warp
+    #T = np.matrix([[math.cos(ta), -math.sin(ta), tx], [math.sin(ta), math.cos(ta), ty]])
+    T = np.matrix([[1, 0, tx], [0, 1, ty]])
+    warped_image = cv2.warpAffine(image, T, (len(image[0]), len(image)))
+    return warped_image
+
+
 kalman = kalman_filter_init()
 k = 1
 while True:
@@ -120,33 +136,27 @@ while True:
         dy = T[0][1, 2]
         da = math.atan2(T[0][1, 0], T[0][0, 0])
 
+        curr2 = curr3 = None
         if MODE_FILTER == ModeFilter.Kalman:
             tx, ty, ta = kalman_filter(kalman, dx, dy, da)
-        else:
+            curr2 = warp_image(curr, tx, ty, ta)
+        elif MODE_FILTER == ModeFilter.AveMove:
             tx, ty, ta = avg_move_filter(dx, dy, da)
+            curr2 = warp_image(curr, tx, ty, ta)
+        else:
+            tx2, ty2, ta2 = avg_move_filter(dx, dy, da)
+            curr2 = warp_image(curr, tx2, ty2, ta2)
+            tx3, ty3, ta3 = kalman_filter(kalman, dx, dy, da)
+            curr3 = warp_image(curr, tx3, ty3, ta3)
 
-        # 通过拐点放射变换值，计算得到warp系数，执行warp
-        #T = np.matrix([[math.cos(ta), -math.sin(ta), tx], [math.sin(ta), math.cos(ta), ty]])
-        T = np.matrix([[1, 0, tx], [0, 1, ty]])
-
-        curr2 = cv2.warpAffine(curr, T, (len(curr[0]), len(curr)))
+        image = np.concatenate((border_crop(curr), border_crop(curr2)), axis=1)
+        if curr3 is not None:
+            image = np.concatenate((image, border_crop(curr3)), axis=1)
+        out.write(image)
 
         # 当前帧切换成过去帧。便于下一步计算新的拐点及其移动。
         prev = curr.copy()
         prev_gray = curr_gray.copy()
-
-        # curr叠加corners展示
-        curro = curr.copy()
-        if DISPLAY_CORNERS:  # 叠加显示了之后，右边的图有较大偏移，尚未知原因
-            for x, y in current_corner2:
-                cv2.circle(curro, (int(x), int(y)), 5, (0, 0, 255), -1)
-
-        if True: # 0 <= k <= 150:
-            # 拼接图像，输出到视频文件
-            image = np.concatenate((curro, curr2), axis=1)
-            out.write(image)
-        else:
-            break
         k += 1
     except Exception as e:
         print(e)
