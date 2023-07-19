@@ -15,7 +15,6 @@ DISPLAY_CORNERS = False
 MODE_FILTER = ModeFilter.Kalman
 
 video_file = "chen1.mp4"
-#video_file = "vsi_o.mp4"
 cap = cv2.VideoCapture(video_file)
 
 ret, prev = cap.read()
@@ -23,7 +22,7 @@ prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
 w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-out_file = "out.avi"
+out_file = "out.mp4"
 fourcc = cv2.VideoWriter.fourcc(*"mp4v")
 fps = 60
 slice_w_offset = int(w / 3)  # 910  # 宽-切片位置
@@ -37,9 +36,9 @@ out = cv2.VideoWriter(out_file, fourcc, fps, (w * 2, h))
 def kalman_filter_init():
     # dx, dy, da, vx, vy
     state_num, measure_num = 5, 3
-    kalman = cv2.KalmanFilter(state_num, measure_num, 0)  # state 3个，measurement 3个
-    kalman.transitionMatrix = 1.0 * np.eye(state_num, state_num)    # F. input
-    kalman.transitionMatrix = np.matrix([
+    kalman = cv2.KalmanFilter(state_num, measure_num, 0)  # state 5个，measurement 3个
+    # kalman.transitionMatrix = 1.0 * np.eye(state_num, state_num)
+    kalman.transitionMatrix = np.matrix([   # F. input
         [1.0, 0., 0., -1., 0],
         [0., 1., 0., 0., -1],
         [0., 0., 1., 0., 0.],
@@ -53,29 +52,12 @@ def kalman_filter_init():
     kalman.statePost = 0.1 * np.random.randn(state_num, 1)               # X^_K|K KF state var
     return kalman
 
-    # # 3个state，1个measurement， 能成功运行kalman.correct(da * np.zeros((1,1)))
-    # kalman = cv2.KalmanFilter(3, 1, 0)  # state 3个，measurement 3个
-    # kalman.transitionMatrix = 1.0 * np.eye(3, 3)    # F. input
-    # kalman.measurementMatrix = 1.0 * np.eye(1, 3)   # 1.0 * np.eye(1, 3)   # H. input
-    # kalman.processNoiseCov = 1e-5 * np.eye(3, 3)    # Q. input
-    # kalman.measurementNoiseCov = 1e-1 * np.ones((1, 1))  # R. input
-    # kalman.errorCovPost = 1.0 * np.eye(3, 3)             # P._K|K KF state var
-    # kalman.statePost = 0.1 * np.random.randn(3, 1)       # X^_K|K KF state var
-    # return kalman
-
-
 def kalman_filter(kalman: cv2.KalmanFilter, dx, dy, da):
     # 预测，updates statePre, statePost, errorCovPre, errorCovPost
     kalman.predict()
 
-#    kalman.correct(da * np.zeros((1,1)))
-#    kalman.correct(da * np.zeros((2, 1)))
-
     # 根据实测值，修正statePost, errorCovPost
-    measurement = 1.0 * np.zeros((3, 1))
-    measurement[0][0] = dx
-    measurement[1][0] = dy
-    measurement[2][0] = da
+    measurement = np.array([[dx], [dy], [da]])
     kalman.correct(measurement)
     return kalman.statePost[0][0], kalman.statePost[1][0], kalman.statePost[2][0]
 
@@ -144,7 +126,7 @@ while True:
             tx, ty, ta = avg_move_filter(dx, dy, da)
 
         # 通过拐点放射变换值，计算得到warp系数，执行warp
-        T = np.matrix([[math.cos(ta), -math.sin(ta), tx], [math.sin(ta), math.cos(ta), ty]])
+        #T = np.matrix([[math.cos(ta), -math.sin(ta), tx], [math.sin(ta), math.cos(ta), ty]])
         T = np.matrix([[1, 0, tx], [0, 1, ty]])
 
         curr2 = cv2.warpAffine(curr, T, (len(curr[0]), len(curr)))
